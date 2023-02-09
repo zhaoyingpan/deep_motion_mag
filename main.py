@@ -1,17 +1,21 @@
 import argparse
 import os
 import shutil
-import tensorflow as tf
 import setproctitle
 from configobj import ConfigObj
 from validate import Validator
 from magnet import MagNet3Frames
+from tqdm import tqdm
+import torch
+from pytorch_msssim import ssim_matlab as calc_ssim
+import json
+import tensorflow as tf
 
 
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--phase', dest='phase', default='train',
                     help='train, test, run, interactive')
-parser.add_argument('--config_file', dest='config_file', required=True,
+parser.add_argument('--config_file', dest='config_file', default='configs/o3f_hmhm2_bg_qnoise_mix4_nl_n_t_ds3.conf',
                     help='path to config file')
 parser.add_argument('--config_spec', dest='config_spec',
                     default='configs/configspec.conf',
@@ -23,7 +27,7 @@ parser.add_argument('--frame_ext', dest='frame_ext', default='png',
                     help='Video frame file extension.')
 parser.add_argument('--out_dir', dest='out_dir', default=None,
                     help='Output folder of the video run.')
-parser.add_argument('--amplification_factor', dest='amplification_factor',
+parser.add_argument('--alpha',
                     type=float, default=5,
                     help='Magnification factor for inference.')
 parser.add_argument('--velocity_mag', dest='velocity_mag', action='store_true',
@@ -39,11 +43,21 @@ parser.add_argument('--n_filter_tap', dest='n_filter_tap', type=int,
                     help='Number of filter tap required.')
 parser.add_argument('--filter_type', dest='filter_type', type=str,
                     help='Type of filter to use, must be Butter or FIR.')
+parser.add_argument('--data_root', type=str)
+parser.add_argument('--vid_path', type=str)
+parser.add_argument('--exp_name', type=str)
+parser.add_argument('--device_id', type=str, default="0")
+
 
 arguments = parser.parse_args()
 
+os.environ["CUDA_VISIBLE_DEVICES"] = arguments.device_id
+
+def cal_rmse(img1, img2):
+    return torch.sqrt(torch.square(img1 - img2).mean())
 
 def main(args):
+    
     configspec = ConfigObj(args.config_spec, raise_errors=True)
     config = ConfigObj(args.config_file,
                        configspec=configspec,
@@ -51,50 +65,72 @@ def main(args):
                        file_error=True)
     # Validate to get all the default values.
     config.validate(Validator())
-    if not os.path.exists(config['exp_dir']):
-        # checkpoint directory.
-        os.makedirs(os.path.join(config['exp_dir'], 'checkpoint'))
-        # Tensorboard logs directory.
-        os.makedirs(os.path.join(config['exp_dir'], 'logs'))
-        # default output directory for this experiment.
-        os.makedirs(os.path.join(config['exp_dir'], 'sample'))
+    # if not os.path.exists(config['exp_dir']):
+    #     # checkpoint directory.
+    #     os.makedirs(os.path.join(config['exp_dir'], 'checkpoint'))
+    #     # Tensorboard logs directory.
+    #     os.makedirs(os.path.join(config['exp_dir'], 'logs'))
+    #     # default output directory for this experiment.
+    #     os.makedirs(os.path.join(config['exp_dir'], 'sample'))
     network_type = config['architecture']['network_arch']
     exp_name = config['exp_name']
+    mode = 'dynamic' if args.velocity_mag else 'static'
+
     setproctitle.setproctitle('{}_{}_{}' \
                               .format(args.phase, network_type, exp_name))
-    tfconfig = tf.ConfigProto(allow_soft_placement=True,
+    tfconfig = tf.compat.v1.ConfigProto(allow_soft_placement=True,
                               log_device_placement=False)
     tfconfig.gpu_options.allow_growth = True
-
-    with tf.Session(config=tfconfig) as sess:
+    
+    results_dict = {}
+    with tf.compat.v1.Session(config=tfconfig) as sess:
         model = MagNet3Frames(sess, exp_name, config['architecture'])
         checkpoint = config['training']['checkpoint_dir']
-        if args.phase == 'train':
-            train_config = config['training']
-            if not os.path.exists(train_config['checkpoint_dir']):
-                os.makedirs(train_config['checkpoint_dir'])
-            model.train(train_config)
-        elif args.phase == 'run':
+        if args.phase == 'run':
+            if int(args.alpha) == args.alpha:
+                alpha = str(int(args.alpha))
+            else:
+                alpha = str(args.alpha).replace('.', '_')
+            out_path = os.path.join(args.out_dir, '{}_x{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0], str(int(args.alpha)), mode))
             model.run(checkpoint,
-                      args.vid_dir,
-                      args.frame_ext,
-                      args.out_dir,
-                      args.amplification_factor,
+                      args.vid_path,
+                      out_path,
+                      args.alpha,
                       args.velocity_mag)
-        elif args.phase == 'run_temporal':
-            model.run_temporal(checkpoint,
-                               args.vid_dir,
-                               args.frame_ext,
-                               args.out_dir,
-                               args.amplification_factor,
-                               args.fl,
-                               args.fh,
-                               args.fs,
-                               args.n_filter_tap,
-                               args.filter_type)
+        elif args.phase == 'eval':
+            
+            from deep_mag_test import get_loader
+            test_loader = get_loader(256, args.data_root, 4)
+
+            save_root = os.path.join('eval_results', args.exp_name)
+            if os.path.exists(save_root):
+                user_input = input('folder for experiment named {} already exists, press ENTER to delete:'.format(args.exp_name))
+                if user_input == '':
+                    shutil.rmtree(save_root)
+                else:
+                    exit()
+            os.mkdir(save_root)
+
+            for i, (images, gt_image, a, flow) in enumerate(tqdm(test_loader)):
+                out_amp = model.inference(checkpoint,
+                                          images,
+                                          a.item())
+                
+                ssim = calc_ssim(torch.tensor(out_amp) / 2 + 0.5, gt_image[0].unsqueeze(0) / 255, val_range=1.).item()
+                rmse = cal_rmse(torch.tensor(out_amp) / 2 + 0.5, gt_image[0].unsqueeze(0) / 255).item()
+                results_dict[i] = {
+                    'flow': flow.item(),
+                    'ssim': ssim,
+                    'rmse': rmse
+                }
+            
+            result_fn = os.path.join('eval_results', args.exp_name, 'data.json')
+            with open(result_fn, 'w') as fp:
+                json.dump(results_dict, fp, indent=4)
+            print('save evaluation results to', result_fn)
         else:
             raise ValueError('Invalid phase argument. '
-                             'Expected ["train", "run", "run_temporal"], '
+                             'Expected ["eval", "run"], '
                              'got ' + args.phase)
 
 

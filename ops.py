@@ -1,7 +1,8 @@
 import math
 import numpy as np
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
+# import tensorflow.contrib.slim as slim
+import tf_slim as slim
 from tensorflow.python.framework import ops
 
 from utils import *
@@ -34,11 +35,11 @@ def instance_norm(input, name="instance_norm"):
 def conv2d(input_, output_dim, ks=4, s=2, stddev=0.02,
            padding='SAME', name="conv2d", activation_fn=None,
            weights_regularizer=None):
-    with tf.variable_scope(name):
+    with tf.compat.v1.variable_scope(name):
         return slim.conv2d(input_, output_dim, ks, s, padding=padding,
                            activation_fn=activation_fn,
                            weights_initializer=
-                           tf.truncated_normal_initializer(stddev=stddev),
+                           tf.compat.v1.truncated_normal_initializer(stddev=stddev),
                            biases_initializer=None,
                            weights_regularizer=weights_regularizer)
 

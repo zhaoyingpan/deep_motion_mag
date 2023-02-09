@@ -59,7 +59,7 @@ def res_decoder(activation,
     r = activation
     for i in range(num_resblk):
         r = residual_block(r, layer_dims, 3, 1, name='decoder_resblk{}'.format(i))
-    up = tf.image.resize_nearest_neighbor(r, tf.shape(r)[1:3] * 2)
+    up = tf.compat.v1.image.resize_nearest_neighbor(r, tf.shape(r)[1:3] * 2)
     up = tf.pad(up, [[0, 0], [1, 1], [1, 1], [0, 0]], "REFLECT")
     d2 = tf.nn.relu(conv2d(up, int(layer_dims / 2), 3, 1, padding='VALID', name='dec_conv2_c'))
     d2 = tf.pad(d2, [[0, 0], [3, 3], [3, 3], [0, 0]], "REFLECT")

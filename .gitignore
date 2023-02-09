@@ -11,3 +11,6 @@ logs
 
 .__afs*
 *DS_Store
+
+eval_results/*
+!eval_results/example/

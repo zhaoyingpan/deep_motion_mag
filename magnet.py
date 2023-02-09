@@ -1,7 +1,6 @@
 from __future__ import print_function
 
 import os
-import tensorflow as tf
 import numpy as np
 import cv2
 import time
@@ -18,6 +17,18 @@ from modules import residual_block, conv2d
 from utils import load_train_data, mkdir, imread, save_images
 from preprocessor import preprocess_image, preproc_color
 from data_loader import read_and_decode_3frames
+import torch
+import tensorflow as tf
+
+def cal_rmse(img1, img2):
+    return torch.sqrt(torch.square(img1 - img2).mean())
+
+def write_video(frames, fps, output_path):
+    h, w, _ = frames[0].shape
+    fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
+    writer = cv2.VideoWriter(output_path, fourcc, fps, (w,h))
+    for frame in frames:
+        writer.write(frame)
 
 # Change here if you use ffmpeg.
 DEFAULT_VIDEO_CONVERTER = 'avconv'
@@ -103,7 +114,7 @@ class MagNet3Frames(object):
 
     def _decoder(self, texture_enc, shape_enc):
         if self.texture_downsample:
-            texture_enc = tf.image.resize_nearest_neighbor(
+            texture_enc = tf.compat.v1.image.resize_nearest_neighbor(
                             texture_enc,
                             tf.shape(texture_enc)[1:3] \
                             * 2)
@@ -129,16 +140,16 @@ class MagNet3Frames(object):
                           is_training,
                           reuse=False,
                           name='ynet_3frames'):
-        with tf.variable_scope(name, reuse=reuse):
-            with tf.variable_scope('encoder'):
+        with tf.compat.v1.variable_scope(name, reuse=reuse):
+            with tf.compat.v1.variable_scope('encoder'):
                 self.texture_a, self.shape_a = self._encoder(image_a)
-            with tf.variable_scope('encoder', reuse=True):
+            with tf.compat.v1.variable_scope('encoder', reuse=True):
                 self.texture_b, self.shape_b = self._encoder(image_b)
-            with tf.variable_scope('manipulator'):
+            with tf.compat.v1.variable_scope('manipulator'):
                 self.out_shape_enc = self.manipulator(self.shape_a,
                                                       self.shape_b,
                                                       amplification_factor)
-            with tf.variable_scope('decoder'):
+            with tf.compat.v1.variable_scope('decoder'):
                 return self._decoder(self.texture_b, self.out_shape_enc)
 
     def save(self, checkpoint_dir, step):
@@ -154,7 +165,7 @@ class MagNet3Frames(object):
     def load(self, checkpoint_dir, loader=None):
         if not loader:
             loader = self.saver
-        print(" [*] Reading checkpoint...")
+        # print(" [*] Reading checkpoint...")
         if os.path.isdir(checkpoint_dir):
             ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
             if ckpt and ckpt.model_checkpoint_path:
@@ -166,18 +177,18 @@ class MagNet3Frames(object):
             ckpt_name = checkpoint_dir
         if ckpt_name:
             loader.restore(self.sess, ckpt_name)
-            print('Loaded from ckpt: ' + ckpt_name)
+            # print('Loaded from ckpt: ' + ckpt_name)
             self.ckpt_name = ckpt_name
             return True
         else:
             return False
 
     def _build_feed_model(self):
-        self.test_input = tf.placeholder(tf.float32,
+        self.test_input = tf.compat.v1.placeholder(tf.float32,
                                          [None, None, None,
                                              self.n_channels * 3],
                                          name='test_AB_and_output')
-        self.test_amplification_factor = tf.placeholder(tf.float32,
+        self.test_amplification_factor = tf.compat.v1.placeholder(tf.float32,
                                                         [None],
                                                         name='amplification_factor')
         self.test_image_a = self.test_input[:, :, :, :self.n_channels]
@@ -192,7 +203,7 @@ class MagNet3Frames(object):
                                False,
                                False)
         self.test_output = tf.clip_by_value(self.test_output, -1.0, 1.0)
-        self.saver = tf.train.Saver()
+        self.saver = tf.compat.v1.train.Saver()
         self.is_graph_built = True
 
     def setup_for_inference(self, checkpoint_dir, image_width, image_height):
@@ -204,17 +215,16 @@ class MagNet3Frames(object):
         self.image_height = image_height
         # Figure out image dimension
         self._build_feed_model()
-        ginit_op = tf.global_variables_initializer()
-        linit_op = tf.local_variables_initializer()
+        ginit_op = tf.compat.v1.global_variables_initializer()
+        linit_op = tf.compat.v1.local_variables_initializer()
         self.sess.run([ginit_op, linit_op])
 
-        if self.load(checkpoint_dir):
-            print("[*] Load Success")
-        else:
+        if not self.load(checkpoint_dir):
             raise RuntimeError('MagNet: Failed to load checkpoint file.')
         self.is_graph_built = True
 
-    def inference(self, frameA, frameB, amplification_factor):
+
+    def inference(self, checkpoint_dir, images, amplification_factor):
         """Run Magnification on two frames.
 
         Args:
@@ -222,6 +232,10 @@ class MagNet3Frames(object):
             frameB: path to second frame
             amplification_factor: float for amplification factor
         """
+        frameA, frameB = images
+        if not self.is_graph_built:
+            self.setup_for_inference(checkpoint_dir, 256, 256)
+
         in_frames = [load_train_data([frameA, frameB, frameB],
                      gray_scale=self.n_channels==1, is_testing=True)]
         in_frames = np.array(in_frames).astype(np.float32)
@@ -230,14 +244,14 @@ class MagNet3Frames(object):
                                 feed_dict={self.test_input: in_frames,
                                            self.test_amplification_factor:
                                            [amplification_factor]})
+        
         return out_amp
 
     def run(self,
             checkpoint_dir,
-            vid_dir,
-            frame_ext,
-            out_dir,
-            amplification_factor,
+            vid_path,
+            out_path,
+            alpha,
             velocity_mag=False):
         """Magnify a video in the two-frames mode.
 
@@ -250,40 +264,67 @@ class MagNet3Frames(object):
                 with 0 being no change.
             velocity_mag: if True, process video in Dynamic mode.
         """
-        vid_name = os.path.basename(out_dir)
-        # make folder
-        mkdir(out_dir)
-        vid_frames = sorted(glob(os.path.join(vid_dir, '*.' + frame_ext)))
-        first_frame = vid_frames[0]
-        im = imread(first_frame)
-        image_height, image_width = im.shape
-        if not self.is_graph_built:
-            self.setup_for_inference(checkpoint_dir, image_width, image_height)
-        try:
-            i = int(self.ckpt_name.split('-')[-1])
-            print("Iteration number is {:d}".format(i))
-            vid_name = vid_name + '_' + str(i)
-        except:
-            print("Cannot get iteration number")
+        cap = cv2.VideoCapture(vid_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        all_frames = []
+        amp_frames = []
+
+        ret, frame = cap.read()
+        while ret:
+            all_frames.append(frame)
+            ret, frame = cap.read()
         if velocity_mag:
             print("Running in Dynamic mode")
-
-        prev_frame = first_frame
-        desc = vid_name if len(vid_name) < 10 else vid_name[:10]
-        for frame in tqdm(vid_frames, desc=desc):
-            file_name = os.path.basename(frame)
-            out_amp = self.inference(prev_frame, frame, amplification_factor)
-
-            im_path = os.path.join(out_dir, file_name)
-            save_images(out_amp, [1, 1], im_path)
+            
+        for i, frame in enumerate(all_frames[1:]):
             if velocity_mag:
-                prev_frame = frame
+                out_amp = self.inference(checkpoint_dir, [all_frames[i-1], frame], alpha)
+            else:
+                out_amp = self.inference(checkpoint_dir, [all_frames[0], frame], alpha)
+            out_amp = np.squeeze(out_amp)
+            out_amp = np.clip(127.5*(out_amp+1), 0, 255).astype('uint8')
+            amp_frames.append(out_amp)
+        write_video(amp_frames, fps, out_path)
+
+        # vid_name = os.path.basename(out_dir)
+        # # # make folder
+        # # mkdir(out_dir)
+        # vid_frames = sorted(glob(os.path.join(vid_dir, '*.' + frame_ext)))
+        # first_frame = vid_frames[0]
+        # im = imread(first_frame)
+        # image_height, image_width = im.shape
+        # if not self.is_graph_built:
+        #     self.setup_for_inference(checkpoint_dir, image_width, image_height)
+        # try:
+        #     i = int(self.ckpt_name.split('-')[-1])
+        #     print("Iteration number is {:d}".format(i))
+        #     vid_name = vid_name + '_' + str(i)
+        # except:
+        #     print("Cannot get iteration number")
+        # if velocity_mag:
+        #     print("Running in Dynamic mode")
+
+        # prev_frame = first_frame
+        # desc = vid_name if len(vid_name) < 10 else vid_name[:10]
+        # for frame in tqdm(vid_frames, desc=desc):
+        #     file_name = os.path.basename(frame)
+        #     out_amp = self.inference(prev_frame, frame, amplification_factor)
+
+        # gt = cv2.imread('/content/frameC0126.png')
+        # print(im.shape, prev_frame, frame, out_amp.shape, type(out_amp), out_amp.max(), out_amp.min())
+        # rmse = cal_rmse(torch.tensor(out_amp.squeeze()) / 2 + 0.5, torch.tensor(gt.astype(np.float)) / 255).item()
+        # print(rmse)
+            # im_path = os.path.join(out_dir, file_name)
+            # save_images(out_amp, [1, 1], im_path)
+            # if velocity_mag:
+            #     prev_frame = frame
 
         # Try to combine it into a video
-        call([DEFAULT_VIDEO_CONVERTER, '-y', '-f', 'image2', '-r', '30', '-i',
-              os.path.join(out_dir, '%06d.png'), '-c:v', 'libx264',
-              os.path.join(out_dir, vid_name + '.mp4')]
-            )
+        # call([DEFAULT_VIDEO_CONVERTER, '-y', '-f', 'image2', '-r', '30', '-i',
+        #       os.path.join(out_dir, '%06d.png'), '-c:v', 'libx264',
+        #       os.path.join(out_dir, vid_name + '.mp4')]
+        #     )
 
     # Temporal Operations
     def _build_IIR_filtering_graphs(self):

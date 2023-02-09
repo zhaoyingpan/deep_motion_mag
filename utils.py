@@ -40,10 +40,15 @@ class ImagePool(object):
             return image
 
 
-def load_train_data(image_path, gray_scale=True, is_testing=False):
-    img_A = imread(image_path[0], gray_scale)
-    img_B = imread(image_path[1], gray_scale)
-    img_Out = imread(image_path[2], gray_scale)
+def load_train_data(images, gray_scale=True, is_testing=False):
+    # img_A = imread(image_path[0], gray_scale)
+    # img_B = imread(image_path[1], gray_scale)
+    # img_Out = imread(image_path[2], gray_scale)
+    img_A, img_B, img_Out = images
+    img_A = np.array(img_A.squeeze())
+    img_B = np.array(img_B.squeeze())
+    img_Out = np.array(img_Out.squeeze())
+
     if not is_testing:
         if np.random.random() > 0.5:
             img_A = np.fliplr(img_A)
