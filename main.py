@@ -46,6 +46,7 @@ parser.add_argument('--filter_type', dest='filter_type', type=str,
 parser.add_argument('--data_root', type=str)
 parser.add_argument('--vid_path', type=str)
 parser.add_argument('--exp_name', type=str)
+parser.add_argument('--eval_dir', type=str)
 parser.add_argument('--device_id', type=str, default="0")
 
 
@@ -102,16 +103,16 @@ def main(args):
             from deep_mag_test import get_loader
             test_loader = get_loader(256, args.data_root, 4)
 
-            save_root = os.path.join('eval_results', args.exp_name)
-            if os.path.exists(save_root):
-                user_input = input('folder for experiment named {} already exists, press ENTER to delete:'.format(args.exp_name))
-                if user_input == '':
-                    shutil.rmtree(save_root)
-                else:
-                    exit()
-            os.mkdir(save_root)
+            save_root = os.path.join(args.eval_dir, 'eval_results', args.exp_name)
+            if not os.path.exists(save_root):
+                # user_input = input('folder for experiment named {} already exists, press ENTER to delete:'.format(args.exp_name))
+                # if user_input == '':
+                #     shutil.rmtree(save_root)
+                # else:
+                #     exit()
+                os.mkdir(save_root)
 
-            for i, (images, gt_image, a, flow) in enumerate(tqdm(test_loader)):
+            for i, (images, gt_image, a, noise_factor) in enumerate(tqdm(test_loader)):
                 out_amp = model.inference(checkpoint,
                                           images,
                                           a.item())
@@ -119,12 +120,12 @@ def main(args):
                 ssim = calc_ssim(torch.tensor(out_amp) / 2 + 0.5, gt_image[0].unsqueeze(0) / 255, val_range=1.).item()
                 rmse = cal_rmse(torch.tensor(out_amp) / 2 + 0.5, gt_image[0].unsqueeze(0) / 255).item()
                 results_dict[i] = {
-                    'flow': flow.item(),
+                    'noise_factor': noise_factor.item(),
                     'ssim': ssim,
                     'rmse': rmse
                 }
             
-            result_fn = os.path.join('eval_results', args.exp_name, 'data.json')
+            result_fn = os.path.join(args.eval_dir, 'eval_results', args.exp_name, 'deep_mag_data.json')
             with open(result_fn, 'w') as fp:
                 json.dump(results_dict, fp, indent=4)
             print('save evaluation results to', result_fn)
