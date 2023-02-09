@@ -113,12 +113,13 @@ def main(args):
                 os.mkdir(save_root)
 
             for i, (images, gt_image, a, noise_factor) in enumerate(tqdm(test_loader)):
+                images_ = [255*image.squeeze().permute(1,2,0) for image in images]
+                gt_image_ = 255*gt_image[0].squeeze().permute(1,2,0)
                 out_amp = model.inference(checkpoint,
-                                          images,
+                                          images_,
                                           a.item())
-                
-                ssim = calc_ssim(torch.tensor(out_amp) / 2 + 0.5, gt_image[0].unsqueeze(0) / 255, val_range=1.).item()
-                rmse = cal_rmse(torch.tensor(out_amp) / 2 + 0.5, gt_image[0].unsqueeze(0) / 255).item()
+                ssim = calc_ssim(torch.tensor(out_amp) / 2 + 0.5, gt_image_.unsqueeze(0) / 255, val_range=1.).item()
+                rmse = cal_rmse(torch.tensor(out_amp) / 2 + 0.5, gt_image_.unsqueeze(0) / 255).item()
                 results_dict[i] = {
                     'noise_factor': noise_factor.item(),
                     'ssim': ssim,
