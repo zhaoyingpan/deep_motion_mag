@@ -38,7 +38,7 @@ class DeepMagTest(Dataset):
             
         images_ = [self.transforms(img_) for img_ in images]
 
-        return images_[0:2], images_[-1], self.data_dict[fn]['alpha'], self.data_dict[fn]['noise_factor']
+        return images_[0:2], images_[-1], self.data_dict[fn]['a'], self.data_dict[fn]['x']
 
     def __len__(self):
         return len(self.filenames)

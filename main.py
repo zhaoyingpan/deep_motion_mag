@@ -121,7 +121,7 @@ def main(args):
                 ssim = calc_ssim(torch.tensor(out_amp) / 2 + 0.5, gt_image_.unsqueeze(0) / 255, val_range=1.).item()
                 rmse = cal_rmse(torch.tensor(out_amp) / 2 + 0.5, gt_image_.unsqueeze(0) / 255).item()
                 results_dict[i] = {
-                    'noise_factor': noise_factor.item(),
+                    'x': noise_factor.item(),
                     'ssim': ssim,
                     'rmse': rmse
                 }
