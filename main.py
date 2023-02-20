@@ -126,7 +126,7 @@ def main(args):
                     'rmse': rmse
                 }
             
-            result_fn = os.path.join(args.eval_dir, 'eval_results', args.exp_name, 'deep_mag_data.json')
+            result_fn = os.path.join(args.eval_dir, 'eval_results', args.exp_name, '{}.json'.format(args.exp_name))
             with open(result_fn, 'w') as fp:
                 json.dump(results_dict, fp, indent=4)
             print('save evaluation results to', result_fn)
