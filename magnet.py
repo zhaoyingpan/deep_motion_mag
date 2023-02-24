@@ -268,7 +268,6 @@ class MagNet3Frames(object):
         fps = cap.get(cv2.CAP_PROP_FPS)
 
         all_frames = []
-        amp_frames = []
 
         ret, frame = cap.read()
         while ret:
@@ -277,6 +276,7 @@ class MagNet3Frames(object):
         if velocity_mag:
             print("Running in Dynamic mode")
             
+        amp_frames = [all_frames[0]]
         for i, frame in enumerate(all_frames[1:]):
             if velocity_mag:
                 out_amp = self.inference(checkpoint_dir, [all_frames[i-1], frame], alpha)

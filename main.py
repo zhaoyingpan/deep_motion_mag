@@ -10,7 +10,8 @@ import torch
 from pytorch_msssim import ssim_matlab as calc_ssim
 import json
 import tensorflow as tf
-
+import cv2
+import numpy as np
 
 parser = argparse.ArgumentParser(description='')
 parser.add_argument('--phase', dest='phase', default='train',
@@ -28,7 +29,7 @@ parser.add_argument('--frame_ext', dest='frame_ext', default='png',
 parser.add_argument('--out_dir', dest='out_dir', default=None,
                     help='Output folder of the video run.')
 parser.add_argument('--alpha',
-                    type=float, default=5,
+                    type=float, default=None,
                     help='Magnification factor for inference.')
 parser.add_argument('--velocity_mag', dest='velocity_mag', action='store_true',
                     help='Whether to do velocity magnification.')
@@ -48,6 +49,7 @@ parser.add_argument('--vid_path', type=str)
 parser.add_argument('--exp_name', type=str)
 parser.add_argument('--eval_dir', type=str)
 parser.add_argument('--device_id', type=str, default="0")
+parser.add_argument('--save_outputs', action='store_true')
 
 
 arguments = parser.parse_args()
@@ -88,15 +90,16 @@ def main(args):
         model = MagNet3Frames(sess, exp_name, config['architecture'])
         checkpoint = config['training']['checkpoint_dir']
         if args.phase == 'run':
-            if int(args.alpha) == args.alpha:
-                alpha = str(int(args.alpha))
+            if args.alpha is None:
+                alpha = int(os.path.basename(args.vid_path).split('.')[0].split('_')[-1])
+                out_path = os.path.join(args.out_dir, '{}_x{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0].replace('_'+str(alpha), ''), str(alpha), mode))
             else:
-                alpha = str(args.alpha).replace('.', '_')
-            out_path = os.path.join(args.out_dir, '{}_x{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0], str(int(args.alpha)), mode))
+                alpha = args.alpha
+                out_path = os.path.join(args.out_dir, '{}_x{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0], str(alpha), mode))
             model.run(checkpoint,
                       args.vid_path,
                       out_path,
-                      args.alpha,
+                      alpha,
                       args.velocity_mag)
         elif args.phase == 'eval':
             
@@ -110,14 +113,21 @@ def main(args):
                 #     shutil.rmtree(save_root)
                 # else:
                 #     exit()
-                os.mkdir(save_root)
+                os.makedirs(save_root)
+            
+            if args.save_outputs:
+                os.makedirs(os.path.join(save_root, 'imgs'), exist_ok=True)
 
-            for i, (images, gt_image, a, noise_factor) in enumerate(tqdm(test_loader)):
+            for i, (images, gt_image, fn, a, noise_factor) in enumerate(tqdm(test_loader)):
                 images_ = [255*image.squeeze().permute(1,2,0) for image in images]
                 gt_image_ = 255*gt_image[0].squeeze().permute(1,2,0)
                 out_amp = model.inference(checkpoint,
                                           images_,
                                           a.item())
+
+                if args.save_outputs:
+                    cv2.imwrite(os.path.join(save_root, 'imgs', os.path.basename(fn[0])), 255*(np.flip(out_amp.squeeze(), axis=-1) / 2 + 0.5))
+                
                 ssim = calc_ssim(torch.tensor(out_amp) / 2 + 0.5, gt_image_.unsqueeze(0) / 255, val_range=1.).item()
                 rmse = cal_rmse(torch.tensor(out_amp) / 2 + 0.5, gt_image_.unsqueeze(0) / 255).item()
                 results_dict[i] = {
