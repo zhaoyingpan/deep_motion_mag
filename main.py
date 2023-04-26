@@ -97,7 +97,7 @@ def main(args):
                 alpha = int(os.path.basename(args.vid_path).split('.')[0].split('_')[-1])
                 out_path = os.path.join(args.out_dir, '{}_x{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0].replace('_'+str(alpha), ''), str(alpha), mode))
             else:
-                alpha = args.alpha
+                alpha = int(args.alpha) if args.alpha == int(args.alpha) else args.alpha
                 out_path = os.path.join(args.out_dir, '{}_x{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0], str(alpha), mode))
             model.run(checkpoint,
                       args.vid_path,
@@ -110,7 +110,7 @@ def main(args):
                 alpha = int(os.path.basename(args.vid_path).split('.')[0].split('_')[-1])
                 out_path = os.path.join(args.out_dir, '{}_x{}_{}_fl{}_fh{}_fs{}_n{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0].replace('_'+str(alpha), ''), str(alpha), mode, args.fl, args.fh, args.fs, args.n_filter_tap, args.filter_type))
             else:
-                alpha = args.alpha
+                alpha = int(args.alpha) if args.alpha == int(args.alpha) else args.alpha
                 out_path = os.path.join(args.out_dir, '{}_x{}_{}_fl{}_fh{}_fs{}_n{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0], str(alpha), mode, args.fl, args.fh, args.fs, args.n_filter_tap, args.filter_type))
             model.run_temporal(checkpoint,
                                args.vid_path,
@@ -161,6 +161,88 @@ def main(args):
             with open(result_fn, 'w') as fp:
                 json.dump(results_dict, fp, indent=4)
             print('save evaluation results to', result_fn)
+        
+        
+        elif args.phase == 'alpha_eval':
+            
+            mm_args = argparse.Namespace()
+            mm_args.mm_loss = 'L1'
+            mm_args.color_loss = 'L1'
+            mm_args.color_weight = 1
+            mm_args.mag_weight = 1
+            mm_args.alpha = 1
+            mm_args.model_type = 'raft'
+            mm_args.model_dir = '/home/panzy/deep_motion_mag/m_utils/raft-sintel.pth'
+            mm_args.perceptual = True
+            mm_args.enable_reverse_color = False
+            mm_args.enable_reverse_mm = False
+            mm_args.enable_align_loss = True
+            mm_args.gaussian_blur = False
+            mm_args.flexible_alpha_training = False
+            mm_args.perceptual_weight = 1
+            mm_args.enable_corrwise = False
+            mm_args.num_iters = 20
+            mm_args.nbr_frame = 2
+            mm_args.enable_cycle_check = True
+            mm_args.data_root = '/n/owens-data1/mnt/big2/data/panzy/youtube-vos-mm2'
+            mm_args.crop_type = 'center'
+            mm_args.img_size = 256
+            mm_args.min_alpha = 2
+            mm_args.max_alpha = 50
+            
+            from m_utils.MM import MM
+            criterion = MM(mm_args)
+            
+            from youtube_vos_mm import get_loader
+            test_loader = get_loader('valid', mm_args, False)
+            
+            all_data = {}
+            for i, (images, a) in enumerate(tqdm(test_loader)):
+                images_ = [255*image.squeeze().permute(1,2,0) for image in images]
+                out_amp = model.inference(checkpoint,
+                                          images_,
+                                          a.item())
+                out_amp = torch.tensor((np.flip(out_amp, axis=-1) / 2 + 0.5)).permute(0,3,1,2).unsqueeze(1).cuda()
+                images_ = torch.stack(images_, dim=0).permute(0,3,1,2).unsqueeze(0).cuda()/255
+                data = criterion.calc_flows(out_amp, images_, a.cpu().numpy())
+
+                for key, value in data.items():
+                    if key not in list(all_data.keys()):
+                        all_data[key] = [value]
+                    else:
+                        all_data[key].append(value)
+            file_path = '/home/panzy/alpha_test/{}.json'.format(args.exp_name)
+            print('saved to {}'.format(file_path))
+            with open(file_path, 'w') as f:
+                json.dump(all_data, f, indent=4)
+
+
+            import matplotlib.pyplot as plt
+            from scipy.stats import gaussian_kde
+            all_keys = list(all_data.keys())[1:]
+            max_alpha = np.ceil(np.array(all_data['alpha']).max())
+
+            plt.figure(figsize=(5*np.ceil(len(all_keys)/2),10))
+            plt.suptitle(os.path.basename(file_path).split('.json')[0])
+            for i in range(len(all_keys)):
+                plt.subplot(2, np.ceil(len(all_keys)/2).astype(int), i+1)
+                key = all_keys[i]
+                
+                x = all_data['alpha']
+                y = all_data[key]
+                xy = np.vstack([x, y])
+                z = gaussian_kde(xy)(xy)
+
+                plt.scatter(x, y, c=z, s=10, label=key)
+                plt.title('{}, error: {}'.format(key, (np.array(x) - np.array(y)).mean()))
+                plt.xlabel('input alpha')
+                plt.ylabel('actual alpha')
+                # plt.scatter(all_data['alpha'], all_data[key], label='ours')
+                plt.plot(np.arange(max_alpha), np.arange(max_alpha), color='r')
+                plt.grid()
+                plt.legend()
+            plt.savefig('/home/panzy/alpha_test/{}.png'.format(args.exp_name))
+        
         else:
             raise ValueError('Invalid phase argument. '
                              'Expected ["eval", "run"], '
