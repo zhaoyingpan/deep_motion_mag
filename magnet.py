@@ -444,7 +444,7 @@ class MagNet3Frames(object):
         # vid_frames = sorted(glob(os.path.join(vid_dir, '*.' + frame_ext)))
         # first_frame = vid_frames[0]
         # im = imread(first_frame)
-        _, image_height, image_width = all_frames[0].shape
+        image_height, image_width, _ = all_frames[0].shape
         if not self.is_graph_built:
             self.image_width = image_width
             self.image_height = image_height
