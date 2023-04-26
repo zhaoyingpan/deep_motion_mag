@@ -24,7 +24,7 @@ parser.add_argument('--config_spec', dest='config_spec',
 # for inference
 parser.add_argument('--vid_dir', dest='vid_dir', default=None,
                     help='Video folder to run the network on.')
-parser.add_argument('--frame_ext', dest='frame_ext', default='png',
+parser.add_argument('--frame_ext', dest='frame_ext', default='jpg',
                     help='Video frame file extension.')
 parser.add_argument('--out_dir', dest='out_dir', default=None,
                     help='Output folder of the video run.')
@@ -48,9 +48,12 @@ parser.add_argument('--data_root', type=str)
 parser.add_argument('--vid_path', type=str)
 parser.add_argument('--exp_name', type=str)
 parser.add_argument('--eval_dir', type=str)
-parser.add_argument('--device_id', type=str, default="0")
+parser.add_argument('--device_id', type=str, default="9")
 parser.add_argument('--save_outputs', action='store_true')
 
+# parser.add_argument('--amplification_factor', dest='amplification_factor',
+#                     type=float, default=5,
+#                     help='Magnification factor for inference.')
 
 arguments = parser.parse_args()
 
@@ -101,6 +104,24 @@ def main(args):
                       out_path,
                       alpha,
                       args.velocity_mag)
+        
+        elif args.phase == 'run_temporal':
+            if args.alpha is None:
+                alpha = int(os.path.basename(args.vid_path).split('.')[0].split('_')[-1])
+                out_path = os.path.join(args.out_dir, '{}_x{}_{}_fl{}_fh{}_fs{}_n{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0].replace('_'+str(alpha), ''), str(alpha), mode, args.fl, args.fh, args.fs, args.n_filter_tap, args.filter_type))
+            else:
+                alpha = args.alpha
+                out_path = os.path.join(args.out_dir, '{}_x{}_{}_fl{}_fh{}_fs{}_n{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0], str(alpha), mode, args.fl, args.fh, args.fs, args.n_filter_tap, args.filter_type))
+            model.run_temporal(checkpoint,
+                               args.vid_path,
+                               out_path,
+                               alpha,
+                               args.fl,
+                               args.fh,
+                               args.fs,
+                               args.n_filter_tap,
+                               args.filter_type)
+
         elif args.phase == 'eval':
             
             from deep_mag_test import get_loader

@@ -331,50 +331,59 @@ class MagNet3Frames(object):
         """
         Assume a_0 = 1
         """
-        self.input_image = tf.placeholder(tf.float32,
-                                          [1, self.image_height,
-                                              self.image_width,
-                                           self.n_channels],
-                                          name='input_image')
-        self.filtered_enc = tf.placeholder(tf.float32,
-                                           [1, None, None,
-                                            self.shape_dims],
-                                           name='filtered_enc')
-        self.out_texture_enc = tf.placeholder(tf.float32,
-                                              [1, None, None,
-                                               self.texture_dims],
-                                              name='out_texture_enc')
-        self.ref_shape_enc = tf.placeholder(tf.float32,
-                                            [1, None, None,
-                                             self.shape_dims],
-                                            name='ref_shape_enc')
-        self.amplification_factor = tf.placeholder(tf.float32, [None],
-                                                   name='amplification_factor')
-        with tf.variable_scope('ynet_3frames'):
-            with tf.variable_scope('encoder'):
+        self.input_image = tf.compat.v1.placeholder(tf.float32,
+                                                    [1, self.image_height,
+                                                        self.image_width,
+                                                    self.n_channels],
+                                                    name='input_image')
+        self.filtered_enc = tf.compat.v1.placeholder(tf.float32,
+                                                    [1, None, None,
+                                                        self.shape_dims],
+                                                    name='filtered_enc')
+        self.out_texture_enc = tf.compat.v1.placeholder(tf.float32,
+                                                        [1, None, None,
+                                                        self.texture_dims],
+                                                        name='out_texture_enc')
+        self.ref_shape_enc = tf.compat.v1.placeholder(tf.float32,
+                                                        [1, None, None,
+                                                        self.shape_dims],
+                                                        name='ref_shape_enc')
+        self.amplification_factor = tf.compat.v1.placeholder(tf.float32, [None],
+                                                            name='amplification_factor')
+        with tf.compat.v1.variable_scope('ynet_3frames'):
+            with tf.compat.v1.variable_scope('encoder'):
                 self.texture_enc, self.shape_rep = \
                     self._encoder(self.input_image)
-            with tf.variable_scope('manipulator'):
+            with tf.compat.v1.variable_scope('manipulator'):
                 # set encoder a to zero because we do temporal filtering
                 # instead of taking the difference.
                 self.out_shape_enc = self.manipulator(0.0,
                                                       self.filtered_enc,
                                                       self.amplification_factor)
                 self.out_shape_enc += self.ref_shape_enc - self.filtered_enc
-            with tf.variable_scope('decoder'):
+            with tf.compat.v1.variable_scope('decoder'):
                 self.output_image = tf.clip_by_value(
                                         self._decoder(self.out_texture_enc,
                                                       self.out_shape_enc),
                                         -1.0, 1.0)
 
-        self.saver = tf.train.Saver()
+        self.saver = tf.compat.v1.train.Saver()
 
+    # def run_temporal(self,
+    #                  checkpoint_dir,
+    #                  vid_dir,
+    #                  frame_ext,
+    #                  out_dir,
+    #                  amplification_factor,
+    #                  fl, fh, fs,
+    #                  n_filter_tap,
+    #                  filter_type):
     def run_temporal(self,
                      checkpoint_dir,
-                     vid_dir,
-                     frame_ext,
-                     out_dir,
-                     amplification_factor,
+                     vid_path,
+                    #  frame_ext,
+                     out_path,
+                     alpha,
                      fl, fh, fs,
                      n_filter_tap,
                      filter_type):
@@ -415,25 +424,34 @@ class MagNet3Frames(object):
             raise ValueError('Filter type must be either '
                              '["fir", "butter", "differenceOfIIR"] got ' + \
                              filter_type)
-        head, tail = os.path.split(out_dir)
-        tail = tail + '_fl{}_fh{}_fs{}_n{}_{}'.format(fl, fh, fs,
-                                                      n_filter_tap,
-                                                      filter_type)
-        out_dir = os.path.join(head, tail)
-        vid_name = os.path.basename(out_dir)
+        # head, tail = os.path.split(out_dir)
+        # tail = tail + '_fl{}_fh{}_fs{}_n{}_{}'.format(fl, fh, fs,
+        #                                               n_filter_tap,
+        #                                               filter_type)
+        # out_dir = os.path.join(head, tail)
+        # vid_name = os.path.basename(out_dir)
         # make folder
-        mkdir(out_dir)
-        vid_frames = sorted(glob(os.path.join(vid_dir, '*.' + frame_ext)))
-        first_frame = vid_frames[0]
-        im = imread(first_frame)
-        image_height, image_width = im.shape
+        # mkdir(out_dir)
+        cap = cv2.VideoCapture(vid_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        all_frames = []
+
+        ret, frame = cap.read()
+        while ret:
+            all_frames.append(frame)
+            ret, frame = cap.read()
+        # vid_frames = sorted(glob(os.path.join(vid_dir, '*.' + frame_ext)))
+        # first_frame = vid_frames[0]
+        # im = imread(first_frame)
+        _, image_height, image_width = all_frames[0].shape
         if not self.is_graph_built:
             self.image_width = image_width
             self.image_height = image_height
             # Figure out image dimension
             self._build_IIR_filtering_graphs()
-            ginit_op = tf.global_variables_initializer()
-            linit_op = tf.local_variables_initializer()
+            ginit_op = tf.compat.v1.global_variables_initializer()
+            linit_op = tf.compat.v1.local_variables_initializer()
             self.sess.run([ginit_op, linit_op])
 
             if self.load(checkpoint_dir):
@@ -448,18 +466,17 @@ class MagNet3Frames(object):
         except:
             print("Cannot get iteration number")
 
+        amp_frames = []
         if len(filter_a) is not 0:
             x_state = []
             y_state = []
-
-            for frame in tqdm(vid_frames, desc='Applying IIR'):
-                file_name = os.path.basename(frame)
-                frame_no, _ = os.path.splitext(file_name)
-                frame_no = int(frame_no)
+            for frame in tqdm(all_frames, desc='Applying IIR'):
+                # file_name = os.path.basename(frame)
+                # frame_no, _ = os.path.splitext(file_name)
+                # frame_no = int(frame_no)
                 in_frames = [load_train_data([frame, frame, frame],
                              gray_scale=self.n_channels==1, is_testing=True)]
                 in_frames = np.array(in_frames).astype(np.float32)
-
                 texture_enc, x = self.sess.run([self.texture_enc, self.shape_rep],
                                                feed_dict={
                                                    self.input_image:
@@ -486,20 +503,20 @@ class MagNet3Frames(object):
                                                    self.filtered_enc: y,
                                                    self.ref_shape_enc: x,
                                                    self.amplification_factor:
-                                                     [amplification_factor]})
+                                                     [alpha]})
 
-                im_path = os.path.join(out_dir, file_name)
+                # im_path = os.path.join(out_dir, file_name)
                 out_amp = np.squeeze(out_amp)
-                out_amp = (127.5*(out_amp+1)).astype('uint8')
-                cv2.imwrite(im_path, cv2.cvtColor(out_amp,
-                                                  code=cv2.COLOR_RGB2BGR))
+                out_amp = np.clip(127.5*(out_amp+1), 0, 255).astype('uint8')
+                amp_frames.append(out_amp)
+                # cv2.imwrite(im_path, cv2.cvtColor(out_amp,
+                #                                   code=cv2.COLOR_RGB2BGR))
         else:
             # This does FIR in fourier domain. Equivalent to cyclic
             # convolution.
             x_state = None
-            for i, frame in tqdm(enumerate(vid_frames),
-                                 desc='Getting encoding'):
-                file_name = os.path.basename(frame)
+            for frame in tqdm(all_frames, desc='Getting encoding'):
+                # file_name = os.path.basename(frame)
                 in_frames = [load_train_data([frame, frame, frame],
                                              gray_scale=self.n_channels==1, is_testing=True)]
                 in_frames = np.array(in_frames).astype(np.float32)
@@ -509,7 +526,7 @@ class MagNet3Frames(object):
                                                    self.input_image:
                                                       in_frames[:, :, :, :3],})
                 if x_state is None:
-                    x_state = np.zeros(x.shape + (len(vid_frames),),
+                    x_state = np.zeros(x.shape + (len(all_frames),),
                                        dtype='float32')
                 x_state[:, :, :, :, i] = x
 
@@ -521,7 +538,7 @@ class MagNet3Frames(object):
                 x_fft *= filter_fft[np.newaxis, np.newaxis, np.newaxis, :]
                 x_state[:, i, :, :] = np.fft.ifft(x_fft)
 
-            for i, frame in tqdm(enumerate(vid_frames), desc='Decoding'):
+            for i, frame in tqdm(enumerate(all_frames), desc='Decoding'):
                 file_name = os.path.basename(frame)
                 frame_no, _ = os.path.splitext(file_name)
                 frame_no = int(frame_no)
@@ -537,20 +554,23 @@ class MagNet3Frames(object):
                                         feed_dict={self.out_texture_enc: texture_enc,
                                                    self.filtered_enc: x_state[:, :, :, :, i],
                                                    self.ref_shape_enc: x,
-                                                   self.amplification_factor: [amplification_factor]})
+                                                   self.amplification_factor: [alpha]})
 
                 im_path = os.path.join(out_dir, file_name)
                 out_amp = np.squeeze(out_amp)
-                out_amp = (127.5*(out_amp+1)).astype('uint8')
-                cv2.imwrite(im_path, cv2.cvtColor(out_amp,
-                                                  code=cv2.COLOR_RGB2BGR))
+                out_amp = np.clip(127.5*(out_amp+1), 0, 255).astype('uint8')
+                amp_frames.append(out_amp)
+                # cv2.imwrite(im_path, cv2.cvtColor(out_amp,
+                #                                   code=cv2.COLOR_RGB2BGR))
             del x_state
+        
+        write_video(amp_frames, fps, out_path)
 
-        # Try to combine it into a video
-        call([DEFAULT_VIDEO_CONVERTER, '-y', '-f', 'image2', '-r', '30', '-i',
-              os.path.join(out_dir, '%06d.png'), '-c:v', 'libx264',
-              os.path.join(out_dir, vid_name + '.mp4')]
-            )
+        # # Try to combine it into a video
+        # call([DEFAULT_VIDEO_CONVERTER, '-y', '-f', 'image2', '-r', '30', '-i',
+        #       os.path.join(out_dir, '%06d.png'), '-c:v', 'libx264',
+        #       os.path.join(out_dir, vid_name + '.mp4')]
+        #     )
 
     # Training code.
     def _build_training_graph(self, train_config):
