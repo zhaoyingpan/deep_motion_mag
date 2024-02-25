@@ -94,7 +94,7 @@ def main(args):
                 alpha = int(os.path.basename(args.vid_path).split('.')[0].split('_')[-1])
                 out_path = os.path.join(args.out_dir, '{}_x{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0].replace('_'+str(alpha), ''), str(alpha), mode))
             else:
-                alpha = args.alpha
+                alpha = int(args.alpha) if args.alpha == int(args.alpha) else args.alpha
                 out_path = os.path.join(args.out_dir, '{}_x{}_{}.mp4'.format(os.path.basename(args.vid_path).split('.')[0], str(alpha), mode))
             model.run(checkpoint,
                       args.vid_path,
